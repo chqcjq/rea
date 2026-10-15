@@ -329,6 +329,13 @@ const checkSymlinks = (
   context: z.RefinementCtx,
 ): void => {
   const lookupPath = createReferenceSourcePathLookup(paths);
+  const unreadableDirectories = new Set(
+    graph.entries.flatMap((entry) =>
+      entry.kind === "directory" && entry.tree_state === "unreadable"
+        ? [entry.path]
+        : [],
+    ),
+  );
   const excludedPaths = createReferenceSourcePathLookup(
     graph.exclusions.map(({ path }) => path),
   );
@@ -348,11 +355,17 @@ const checkSymlinks = (
       posix.join(posix.dirname(entry.path), entry.target),
     );
     const escapesRoot = resolved.startsWith("../") || resolved === "..";
-    // The root is implicit; every other internal target needs an exact or
-    // uniquely Unicode-equivalent recorded inventory identity.
+    // The root is implicit. Recorded inventory identities resolve by exact
+    // spelling or a unique Unicode-equivalent path.
     const inventoried =
       resolved === "." || lookupPath.resolve(resolved) !== undefined;
     const exactExcluded = excludedPaths.resolve(resolved);
+    // realpath can prove root containment through a searchable directory even
+    // when enumeration failed. Keep that target observation without asserting
+    // an inventory entry beneath the explicitly unreadable subtree.
+    const ancestor = lookupPath.resolveAncestor(posix.dirname(resolved));
+    const unenumerated =
+      ancestor !== undefined && unreadableDirectories.has(ancestor);
     let excluded = exactExcluded !== undefined;
     for (
       let candidate = posix.dirname(resolved);
@@ -383,11 +396,11 @@ const checkSymlinks = (
         path: ["entries", index, "target"],
       });
     if (entry.target_state !== "internal") continue;
-    if (escapesRoot || (!inventoried && !excluded))
+    if (escapesRoot || (!inventoried && !excluded && !unenumerated))
       context.addIssue({
         code: "custom",
         message:
-          "Internal symlink target must resolve to an inventoried entry or a recorded exclusion",
+          "Internal symlink target must resolve to an inventoried entry, a recorded exclusion, or an unreadable directory subtree",
         path: ["entries", index, "target"],
       });
   }

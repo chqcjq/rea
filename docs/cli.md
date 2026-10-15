@@ -250,6 +250,10 @@ hidden by the chosen depth; it does not count unexamined children of excluded or
 unreadable directories, or change `inventory_state`. Exclusions and source
 limitations remain separate from this presentation omission.
 
+A symlink whose target resolves inside an unreadable directory retains the
+observed internal path. The directory remains `unreadable` and the inventory
+remains `partial`; the target is not thereby claimed to be inventoried.
+
 `file_sizes.known_bytes` is the exact sum of known inventoried file sizes as
 decimal text, so large sums cannot lose integer precision. Unknown sizes count
 in `file_sizes.unknown_file_count`; excluded or unexamined paths are not included

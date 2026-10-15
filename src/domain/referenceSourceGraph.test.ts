@@ -459,6 +459,56 @@ describe("historical source graph validation", () => {
 });
 
 describe("historical source graph excluded symlink targets", () => {
+  it("retains observed internal targets under an unreadable directory without inventing entries", () => {
+    const input = { ...graphInput(), inventory_state: "partial" as const };
+    input.entries.push({
+      ...directoryEntry("unreadable"),
+      path: "zzz-hidden",
+      limitations: ["EACCES: directory enumeration denied"],
+    });
+    input.entries[2] = symlinkEntry({
+      target: "../zzz-hidden/nested/target.txt",
+    });
+    const graph = createHistoricalSourceGraph(input);
+    expect(graph.inventory_state).toBe("partial");
+    expect(graph.entries).toContainEqual(
+      expect.objectContaining({
+        path: "src/package.json",
+        target: "../zzz-hidden/nested/target.txt",
+        target_state: "internal",
+      }),
+    );
+    expect(
+      graph.entries.some(({ path }) => path === "zzz-hidden/nested/target.txt"),
+    ).toBe(false);
+    expect(graph.entries).toContainEqual(
+      expect.objectContaining({
+        path: "zzz-hidden",
+        tree_state: "unreadable",
+        limitations: ["EACCES: directory enumeration denied"],
+      }),
+    );
+
+    for (const target of [
+      "../zzz-hidden-other/target.txt",
+      "../absent/target.txt",
+    ])
+      expect(() =>
+        createHistoricalSourceGraph({
+          ...input,
+          entries: input.entries.map((entry) =>
+            entry.kind === "symlink" ? { ...entry, target } : entry,
+          ),
+        }),
+      ).toThrow(/inventoried/u);
+
+    input.entries[input.entries.length - 1] = {
+      ...directoryEntry(),
+      path: "zzz-hidden",
+    };
+    expect(() => createHistoricalSourceGraph(input)).toThrow(/inventoried/u);
+  });
+
   it("retains internal symlinks into excluded trees without accepting sibling prefixes", () => {
     const input = { ...graphInput(), inventory_state: "partial" as const };
     input.exclusions = [

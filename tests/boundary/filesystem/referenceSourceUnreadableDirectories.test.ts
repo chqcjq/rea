@@ -1,4 +1,4 @@
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -20,6 +20,78 @@ const permissionChecksUnavailable =
   process.platform === "win32" || process.getuid?.() === 0;
 
 describe("reference source native unreadable directories", () => {
+  it.skipIf(permissionChecksUnavailable)(
+    "retains a resolved symlink into a searchable but unreadable subtree",
+    async () => {
+      const root = await createTestTempDirectory("rea-source-unreadable-link-");
+      const hidden = join(root, "hidden");
+      const alias = join(root, "alias.txt");
+      await mkdir(hidden);
+      await writeFile(join(root, "visible.txt"), "visible\n");
+      await writeFile(join(hidden, "target.txt"), "target\n");
+      await symlink("hidden/target.txt", alias);
+      await chmod(hidden, 0o111);
+      try {
+        const imported = await importTree(root);
+        if (!imported.ok) throw new Error(imported.error.message);
+        expect(imported.value.inventory_state).toBe("partial");
+        expect(imported.value.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: "alias.txt",
+              kind: "symlink",
+              target: "hidden/target.txt",
+              target_state: "internal",
+            }),
+            expect.objectContaining({
+              path: "hidden",
+              tree_state: "unreadable",
+              limitations: [expect.stringContaining("EACCES")],
+            }),
+            expect.objectContaining({
+              path: "visible.txt",
+              content_state: "hashed",
+            }),
+          ]),
+        );
+        expect(
+          imported.value.entries.some(
+            ({ path }) => path === "hidden/target.txt",
+          ),
+        ).toBe(false);
+
+        await unlink(alias);
+        const noLink = await importTree(root);
+        if (!noLink.ok) throw new Error(noLink.error.message);
+        expect(noLink.value.entries).toContainEqual(
+          expect.objectContaining({
+            path: "hidden",
+            tree_state: "unreadable",
+          }),
+        );
+
+        await symlink("hidden/target.txt", alias);
+        await chmod(hidden, 0o755);
+        const readable = await importTree(root);
+        if (!readable.ok) throw new Error(readable.error.message);
+        expect(readable.value.entries).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: "hidden",
+              tree_state: "enumerated",
+            }),
+            expect.objectContaining({
+              path: "hidden/target.txt",
+              content_state: "hashed",
+            }),
+          ]),
+        );
+      } finally {
+        await chmod(hidden, 0o700);
+      }
+    },
+  );
+
   it.skipIf(permissionChecksUnavailable).each(["blocked", "src/blocked"])(
     "preserves a partial graph when %s cannot be enumerated",
     async (blocked) => {
