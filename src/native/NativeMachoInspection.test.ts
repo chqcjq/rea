@@ -143,6 +143,45 @@ describe("Mach-O tool architecture selection", () => {
   );
 });
 
+it("retains all linker options in exhaustive load-command inspection", async () => {
+  const runner = new NativeFixtureRunner({
+    otool: withOtoolMachHeader(
+      "Load command 0\n cmd LC_LINKER_OPTION\n cmdsize 40\n count 2\n string #1 -framework\n string #2 Foundation\n",
+    ),
+  });
+  const result = await inspectNativeMacho({
+    target: nativeMachoTarget("/fixture/app"),
+    run: (tool, args) => runner.run(tool, args),
+    invocation: (capture) => ({
+      tool: capture.tool,
+      command: [capture.executable, ...capture.arguments],
+      tool_version: capture.toolVersion,
+      version_reason: capture.versionReason,
+      executable_sha256: capture.executableSha256,
+      exit: { code: capture.exitCode, signal: capture.signal },
+      stdout_bytes: capture.stdoutBytes,
+      stderr_bytes: capture.stderrBytes,
+    }),
+  });
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    load_commands: {
+      exhaustive: true,
+      items: [
+        {
+          index: 0,
+          kind: "LC_LINKER_OPTION",
+          fields: {
+            count: 2,
+            "string #1": "-framework",
+            "string #2": "Foundation",
+          },
+        },
+      ],
+    },
+  });
+});
+
 describe("Mach-O UUID reconciliation", () => {
   const validUuid = "01234567-89AB-CDEF-0123-456789ABCDEF";
 

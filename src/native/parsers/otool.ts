@@ -280,6 +280,7 @@ const parseLoadCommand = (block: string, state: ParsedLoadCommands): void => {
   if (kind === null) throw new TypeError("otool load command is missing cmd");
   for (const key of scalarFields(kind)) requireUniqueField(parsed, key);
   if (DYLIB_COMMANDS.has(kind)) validateDylibCommandLines(parsed);
+  if (kind === "LC_LINKER_OPTION") validateLinkerOptions(parsed);
   state.commands.push({
     index,
     kind,
@@ -290,6 +291,24 @@ const parseLoadCommand = (block: string, state: ParsedLoadCommands): void => {
   collectBuild(kind, block, fields, state);
   collectDependency(kind, fields, state);
   collectSegment(kind, block, fields, state);
+};
+
+const validateLinkerOptions = (parsed: ParsedFields): void => {
+  requireUniqueField(parsed, "count");
+  const count = numberField(parsed.values, "count");
+  const options = parsed.rows.filter(
+    (row) => row?.[0].startsWith("string") === true,
+  );
+  if (
+    count === null ||
+    !Number.isSafeInteger(count) ||
+    count < 0 ||
+    options.length !== count ||
+    options.some((row, index) => row?.[0] !== `string #${index + 1}`)
+  )
+    throw new TypeError(
+      "otool linker-option strings do not match their count and order",
+    );
 };
 
 const validateDylibCommandLines = (parsed: ParsedFields): void => {
@@ -430,7 +449,7 @@ const parseFields = (block: string): ParsedFields => {
     if (field === undefined) continue;
     const [key, value] = field;
     fields[key] =
-      key === "segname" || key === "sectname"
+      key === "segname" || key === "sectname" || key.startsWith("string #")
         ? value
         : (numeric(value) ?? value);
   }
@@ -438,6 +457,10 @@ const parseFields = (block: string): ParsedFields => {
 };
 
 const parseField = (rawLine: string): readonly [string, string] | undefined => {
+  // The printed index identifies each option; only the first space after it
+  // is framing. Remaining whitespace belongs to the option itself.
+  const option = /^\s*string (#\d+)(?: (.*))?$/u.exec(rawLine);
+  if (option !== null) return [`string ${option[1]}`, option[2] ?? ""];
   const line = rawLine.trim();
   // Match time stamp as a whole without swallowing `name stamp plugin.dylib`.
   const match = /^((?:time stamp)|\S+(?:\s+version)?)(?:\s+(.+))?$/u.exec(line);
